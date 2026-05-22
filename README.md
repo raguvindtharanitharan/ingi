@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/migrare-logo-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/migrare-logo-light.png">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.png">
     <img alt="Migrare" src="assets/migrare-logo-light.png">
   </picture>
 </p>
