@@ -7,6 +7,7 @@ import { Command } from 'commander';
 
 import { parseWorkbook } from './parsers/index.js';
 import { generateMarkdownModel } from './generators/index.js';
+import { enrichWorkbook, type EnrichStep } from './enrichers/index.js';
 import { logger as log } from './utils/logger.js';
 
 declare const __DREXO_VERSION__: string;
@@ -55,7 +56,9 @@ program
     'Parse a Tableau workbook (.twbx) and write a canonical metadata file (markdown + YAML).'
   )
   .option('-o, --output <path>', 'output file path (default: <input>.model.md)')
-  .action(async (file: string, options: { output?: string }) => {
+  .option('--enrich', 'enrich metadata with AI-generated summaries and descriptions (requires ANTHROPIC_API_KEY)')
+  .option('--enrich-model <model>', 'Claude model to use for enrichment', 'claude-haiku-4-5-20251001')
+  .action(async (file: string, options: { output?: string; enrich?: boolean; enrichModel?: string }) => {
     const start = performance.now();
     try {
       if (!existsSync(file)) {
@@ -63,14 +66,54 @@ program
         process.exit(1);
       }
 
+      if (options.enrich && !process.env.ANTHROPIC_API_KEY) {
+        console.error(chalk.red('\n✖ --enrich requires ANTHROPIC_API_KEY\n'));
+        console.error(chalk.gray('  Set the environment variable and re-run:'));
+        console.error(chalk.cyan('    export ANTHROPIC_API_KEY=sk-ant-...'));
+        console.error(chalk.cyan(`    drexo analyze ${file} --enrich\n`));
+        console.error(chalk.gray('  Get an API key at: https://console.anthropic.com\n'));
+        process.exit(1);
+      }
+
       log.info(`🔍 Analyzing ${chalk.bold(path.basename(file))}`);
 
-      const workbook = await parseWorkbook(file);
+      let workbook = await parseWorkbook(file);
       log.success(
         `Parsed ${workbook.dataSources.length} data sources, ` +
           `${workbook.worksheets.length} worksheets, ` +
           `${workbook.dashboards.length} dashboards`
       );
+
+      if (options.enrich) {
+        log.info(`✦ Enriching metadata (${workbook.worksheets.length} worksheets, ${workbook.calculations.length} calculations)...`);
+
+        const { workbook: enriched, usage } = await enrichWorkbook(workbook, {
+          apiKey: process.env.ANTHROPIC_API_KEY!,
+          model: options.enrichModel,
+          onProgress: (step: EnrichStep) => {
+            const label: Record<EnrichStep['phase'], string> = {
+              executive_summary: 'executive summary',
+              worksheet_descriptions: 'worksheet descriptions',
+              calc_simplifications: 'calc simplifications',
+            };
+            const name = label[step.phase];
+            const cacheNote = step.fromCache > 0 ? chalk.gray(` (${step.fromCache} from cache)`) : '';
+            if (step.done === step.total) {
+              const counter = step.total > 1 ? ` [${step.done}/${step.total}]` : '';
+              log.success(`  ${name}${counter}${cacheNote}`);
+            }
+          },
+        });
+
+        workbook = enriched;
+
+        const costDisplay = usage.estimatedCostUsd < 0.001
+          ? chalk.gray('< $0.001')
+          : chalk.gray(`~$${usage.estimatedCostUsd.toFixed(4)}`);
+        log.info(
+          `  Tokens used: ${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out  ${costDisplay}`
+        );
+      }
 
       const markdown = generateMarkdownModel(workbook);
       const outputPath = options.output ?? defaultOutputPath(file);

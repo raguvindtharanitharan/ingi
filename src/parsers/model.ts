@@ -253,6 +253,7 @@ export type CalculationComplexity = 'simple' | 'medium' | 'complex';
 export interface Calculation {
   name: string;
   formula: string;
+  simplifiedFormula?: string; // v0.2+: plain-English restatement from AI enrichment
   dependsOn: string[]; // empty in v0.1; populated when formula parsing lands in v0.2+
   complexity?: CalculationComplexity;
   notes?: string;

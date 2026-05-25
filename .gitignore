@@ -50,3 +50,6 @@ docs/plans/sessions/
 
 # Per-developer Claude permissions — start fresh on each machine
 .claude/settings.local.json
+
+# Enrichment cache — content-hash keyed, regenerable
+.drexo-cache/
