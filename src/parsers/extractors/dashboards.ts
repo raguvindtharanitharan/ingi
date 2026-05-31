@@ -63,8 +63,12 @@ function mapZone(zone: any): Zone {
 
   // Extract paramctrl-specific fields
   const controlMode = normalizeControlMode(zone['@_mode']);
+  // Strip the datasource namespace prefix generically: '[DataSource].[Name]' → 'Name'
+  // Works for any language/locale — does not hardcode 'Parameters'.
   const paramRef = zone['@_param']
-    ? String(zone['@_param']).replace(/^\[Parameters\]\.\[|\]$/g, '').replace(/\[|\]/g, '')
+    ? String(zone['@_param'])
+        .replace(/^\[[^\]]*\]\.\[/, '')  // strip [AnyDataSource].[ prefix
+        .replace(/\]$/, '')              // strip trailing ]
     : undefined;
 
   const showTitle = zone['@_show-title'] !== 'false';
@@ -93,7 +97,11 @@ function extractZoneLabel(zone: any): string {
   const runs = toArray(ft.run ?? []);
   return runs
     .map((r: any) => (typeof r === 'string' ? r : (r['#text'] ?? '')))
-    .filter((t: string) => t.trim().length > 0 && !t.includes('Æ') && !t.includes('&#10;'))
+    // Tableau uses U+00C6 (Æ) and &#10; as internal line/paragraph separators —
+    // replace them with spaces rather than dropping the whole run.
+    .map((t: string) => t.replace(/Æ|&#10;|&#13;/g, ' '))
+    .map((t: string) => t.trim())
+    .filter((t: string) => t.length > 0)
     .join(' ')
     .trim();
 }
@@ -101,14 +109,16 @@ function extractZoneLabel(zone: any): string {
 function normalizeControlMode(mode: string | undefined): string | undefined {
   if (!mode) return undefined;
   const map: Record<string, string> = {
-    compact:        'dropdown',
-    dropdown:       'dropdown',
-    slider:         'slider',
-    radio:          'radio',
+    compact:          'dropdown',
+    dropdown:         'dropdown',
+    slider:           'slider',
+    radio:            'radio',
     'multiple-values': 'multi-select',
-    'single-value': 'dropdown',
-    checkbox:       'checkbox',
-    list:           'list',
+    'multiple_values': 'multi-select',  // Tableau uses both hyphen and underscore variants
+    'single-value':   'dropdown',
+    'single_value':   'dropdown',
+    checkbox:         'checkbox',
+    list:             'list',
   };
   return map[mode] ?? mode;
 }

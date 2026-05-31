@@ -46,6 +46,14 @@ output-*/
 # Generated analysis reports (drexo analyze --output-dir)
 examples/reports/
 
+# Generated metadata files (drexo analyze output)
+examples/*.model.md
+examples/*.visual.md
+
+# Generated app outputs (drexo migrate output)
+examples/*-app/
+examples/drexo-app/
+
 # Local AI agent / Grok session data (optional - keep plans in docs/plans/ instead)
 .grok-local/
 docs/plans/sessions/

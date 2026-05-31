@@ -9,6 +9,9 @@ import { parseWorkbook } from './parsers/index.js';
 import { generateMarkdownModel } from './generators/index.js';
 import { generateVisualBlueprint } from './generators/visual-blueprint.js';
 import { generateLayoutHtml } from './generators/layout-html.js';
+import { scaffoldStaticFiles } from './generators/react/scaffolder.js';
+import { generateDashboardComponent } from './generators/react/dashboard-component.js';
+import { generateAppTsx, generateWorkbookListTsx } from './generators/react/app-shell.js';
 import { generateReportIndex, toSubdirName, type IndexEntry } from './generators/report-index.js';
 import { enrichWorkbook, type EnrichStep } from './enrichers/index.js';
 import { logger as log } from './utils/logger.js';
@@ -296,52 +299,74 @@ async function runConcurrently<T>(
 // ---------------------------------------------------------------------------
 
 program
-  .command('migrate <file>')
-  .description('Generate a React app from a Tableau workbook. Runs analyze first if metadata files are missing.')
-  .option('--output-dir <path>', 'output directory (default: ./<workbook-name>-app)')
+  .command('migrate <files...>')
+  .description('Generate a single React app from one or more Tableau workbooks. Accepts files or a directory.')
+  .option('--output-dir <path>', 'output directory (default: ./drexo-app)')
   .option('--enrich', 'enrich metadata with AI before migrating (requires ANTHROPIC_API_KEY)')
-  .action(async (file: string, options: { outputDir?: string; enrich?: boolean }) => {
+  .action(async (rawArgs: string[], options: { outputDir?: string; enrich?: boolean }) => {
     const start = performance.now();
     try {
-      if (!existsSync(file)) {
-        log.error(`File not found: ${file}`);
-        process.exit(1);
-      }
+      const files = await collectTwbxFiles(rawArgs);
+      if (files.length === 0) { log.error('No .twbx files found.'); process.exit(1); }
 
-      // Resolve output directory
-      const parsed = path.parse(file);
-      const outputDir = options.outputDir ?? path.join(parsed.dir, `${parsed.name}-app`);
+      const outputDir = options.outputDir ?? path.join(process.cwd(), 'drexo-app');
       await mkdir(outputDir, { recursive: true });
+      await mkdir(path.join(outputDir, 'src', 'workbooks'), { recursive: true });
 
-      // Check if md files exist — if not, run analyze first
-      const modelPath = path.join(parsed.dir, `${parsed.name}.model.md`);
-      const visualPath = path.join(parsed.dir, `${parsed.name}.visual.md`);
-      const mdsMissing = !existsSync(modelPath) || !existsSync(visualPath);
+      log.info(`⚛  Migrating ${files.length} workbook${files.length === 1 ? '' : 's'} → ${chalk.cyan(outputDir)}`);
 
-      if (mdsMissing) {
-        log.info(`↳ Metadata files not found — running analyze first...`);
-        await analyzeOne(file, { enrich: options.enrich ?? false });
-        log.info('');
+      // Parse all workbooks (auto-analyze if md files missing)
+      const workbooks = [];
+      for (const file of files) {
+        const parsed = path.parse(file);
+        const modelPath = path.join(parsed.dir, `${parsed.name}.model.md`);
+        const visualPath = path.join(parsed.dir, `${parsed.name}.visual.md`);
+        if (!existsSync(modelPath) || !existsSync(visualPath)) {
+          log.info(`  ↳ Analyzing ${chalk.bold(parsed.base)} first...`);
+          await analyzeOne(file, { enrich: options.enrich ?? false });
+        }
+        const workbook = await parseWorkbook(file);
+        workbooks.push({ file, workbook, slug: toSubdirName(parsed.base) });
       }
 
-      // Parse workbook for generation
-      log.info(`⚛  Generating app from ${chalk.bold(path.basename(file))}`);
-      const workbook = await parseWorkbook(file);
+      // Scaffold static files
+      const appTitle = workbooks.length === 1
+        ? workbooks[0].workbook.metadata.name
+        : 'drexo Dashboards';
+      for (const sf of scaffoldStaticFiles(appTitle)) {
+        const dest = path.join(outputDir, sf.relativePath);
+        await mkdir(path.dirname(dest), { recursive: true });
+        await writeFile(dest, sf.content, 'utf-8');
+      }
 
-      // Step 1: Layout HTML
-      const layoutHtml = generateLayoutHtml(workbook);
-      const layoutPath = path.join(outputDir, 'index.html');
-      await writeFile(layoutPath, layoutHtml, 'utf-8');
+      // Generate per-workbook Dashboard.tsx + layout-preview.html
+      const entries = [];
+      for (const { workbook, slug } of workbooks) {
+        const dashDir = path.join(outputDir, 'src', 'workbooks', slug);
+        await mkdir(dashDir, { recursive: true });
+        const dashContent = generateDashboardComponent(workbook);
+        await writeFile(path.join(dashDir, 'Dashboard.tsx'), dashContent, 'utf-8');
+        const previewHtml = generateLayoutHtml(workbook);
+        await writeFile(path.join(dashDir, 'layout-preview.html'), previewHtml, 'utf-8');
+        entries.push({ workbook, slug });
+        log.success(`  ${chalk.cyan(`src/workbooks/${slug}/Dashboard.tsx`)}`);
+        log.success(`  ${chalk.cyan(`src/workbooks/${slug}/layout-preview.html`)}`);
+      }
+
+      // Generate App.tsx + WorkbookList.tsx
+      await writeFile(path.join(outputDir, 'src', 'App.tsx'), generateAppTsx(entries), 'utf-8');
+      await writeFile(path.join(outputDir, 'src', 'WorkbookList.tsx'), generateWorkbookListTsx(entries), 'utf-8');
 
       const elapsed = ((performance.now() - start) / 1000).toFixed(2);
-      log.success(`Wrote ${chalk.cyan(layoutPath)} in ${elapsed}s`);
-      log.info(`  Open in browser: ${chalk.cyan(`file://${path.resolve(layoutPath)}`)}`);
+      log.success(`Done in ${elapsed}s`);
+      log.info(`\n  ${chalk.bold('Next steps:')}`);
+      log.info(`    cd ${outputDir}`);
+      log.info(`    npm install`);
+      log.info(`    npm run dev`);
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       log.error(`Migration failed: ${reason}`);
-      if (process.env.DEBUG && e instanceof Error && e.stack) {
-        console.error(chalk.gray(e.stack));
-      }
+      if (process.env.DEBUG && e instanceof Error && e.stack) console.error(chalk.gray((e as Error).stack));
       process.exit(1);
     }
   });

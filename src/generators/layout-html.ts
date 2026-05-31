@@ -1,12 +1,12 @@
-import type { TableauWorkbook, Dashboard, Zone, MarkType } from '../parsers/model.js';
+import type { TableauWorkbook, MarkType } from '../parsers/model.js';
+import {
+  collectLeafZones, buildFiltersByWorksheet, pickDashboard,
+  cleanRef, markTypeLabel, zoneColors, pct,
+  type LeafKind,
+} from './react/zone-helpers.js';
 
 export function generateLayoutHtml(workbook: TableauWorkbook): string {
-  // Pick the most relevant dashboard — prefer the one matching the workbook name,
-  // otherwise take the last one (typically the main dashboard)
-  const dashboard =
-    workbook.dashboards.find((d) =>
-      d.name.toLowerCase().includes(workbook.metadata.name.toLowerCase())
-    ) ?? workbook.dashboards[workbook.dashboards.length - 1];
+  const dashboard = pickDashboard(workbook);
 
   if (!dashboard) return errorHtml('No dashboards found in workbook.');
 
@@ -22,59 +22,36 @@ export function generateLayoutHtml(workbook: TableauWorkbook): string {
   const totalH = maxY - minY || 1;
   const totalArea = totalW * totalH;
 
-  // Identify control zones: zones that share a worksheet name with a larger zone
+  // Identify control zones: zones that share a name with a larger zone
   const areaByName = new Map<string, number>();
   for (const z of leaves) {
     const area = z.w * z.h;
-    if (!areaByName.has(z.worksheet) || area > areaByName.get(z.worksheet)!) {
-      areaByName.set(z.worksheet, area);
+    if (!areaByName.has(z.worksheetOrName) || area > areaByName.get(z.worksheetOrName)!) {
+      areaByName.set(z.worksheetOrName, area);
     }
   }
 
-  // Build quick-filter label map: worksheet → filter field names (non-action filters)
-  const filtersByWorksheet = new Map<string, string[]>();
-  for (const f of workbook.filters) {
-    if (f.name.includes('Action (')) continue; // skip action filters
-    const raw = f.name.split('].').pop() ?? '';
-    const field = raw
-      .replace(/^\[/, '')          // strip leading [
-      .replace(/\]$/, '')          // strip trailing ]
-      .replace(/^none:/, '')       // strip none: prefix
-      .replace(/^usr:/, '')        // strip usr: prefix
-      .replace(/^sum:/, '')        // strip sum: prefix
-      .replace(/:[a-z]+$/, '');    // strip :nk / :qk / :ok suffix
-    if (!field || field.includes('Latitude') || field.includes('Longitude') || field.includes('Measure Names')) continue;
-    for (const ws of f.appliedTo) {
-      const arr = filtersByWorksheet.get(ws) ?? [];
-      if (!arr.includes(field)) arr.push(field);
-      filtersByWorksheet.set(ws, arr);
-    }
-  }
+  const filtersByWorksheet = buildFiltersByWorksheet(workbook);
 
   const zones = leaves.map((z) => {
-    const encoding = workbook.visualEncodings.find((e) => e.worksheet === z.worksheet);
+    const encoding = workbook.visualEncodings.find((e) => e.worksheet === z.worksheetOrName);
     const markType = encoding?.effectiveMarkType ?? 'unsupported';
     const area = z.w * z.h;
-    const maxArea = areaByName.get(z.worksheet) ?? area;
+    const maxArea = areaByName.get(z.worksheetOrName) ?? area;
     const hasEncodings = encoding
       ? encoding.rows.length > 0 || encoding.columns.length > 0
       : false;
 
-    // A zone is a "control" if it's non-worksheet (paramctrl/text),
-    // OR a duplicate-named worksheet that's smaller than the main view (quick filter),
-    // OR a small worksheet with NO field encodings (text label / button).
-    // A small worksheet WITH real encodings is still a data view — leave it as-is.
     const isTextButton = z.kind === 'worksheet' && !hasEncodings && area < maxArea * 0.5;
     const isControl = z.kind !== 'worksheet' ||
-      (area < maxArea && hasEncodings) ||   // smaller duplicate with data = quick filter
-      isTextButton;                          // no encoding = text/button
-    const filterFields = filtersByWorksheet.get(z.worksheet) ?? [];
+      (area < maxArea && hasEncodings) ||
+      isTextButton;
+    const filterFields = filtersByWorksheet.get(z.worksheetOrName) ?? [];
 
-    // Resolve row/column field names for worksheet panels
     const rowFields = encoding
       ? encoding.rows
           .map((r) => r.caption ?? cleanRef(r.field))
-          .filter((n) => n && !n.includes('Latitude') && !n.includes('Longitude'))
+          .filter((n) => n && !/Latitude|Longitude/i.test(n))
       : [];
     const colFields = encoding
       ? encoding.columns
@@ -85,8 +62,8 @@ export function generateLayoutHtml(workbook: TableauWorkbook): string {
     const hasMeasureNames = encoding?.columns.some((c) => c.field.includes(':Measure Names')) ?? false;
 
     return {
-      name: z.displayLabel || z.worksheet,
-      internalName: z.worksheet,
+      name: z.displayLabel || z.worksheetOrName,
+      internalName: z.worksheetOrName,
       kind: z.kind,
       markType,
       isControl,
@@ -179,9 +156,8 @@ export function generateLayoutHtml(workbook: TableauWorkbook): string {
     </div>`;
       }
 
-      // small worksheet → quick filter — show field names + filter type
+      // small worksheet → quick filter
       const filterLabel = z.filterFields.length > 0 ? z.filterFields : [z.name];
-      const filterType = z.filterFields.some(f => f.toLowerCase().includes('status') || f.toLowerCase().includes('type')) ? 'single-value list' : 'dropdown';
       return `
     <div style="
       position: absolute;
@@ -201,7 +177,6 @@ export function generateLayoutHtml(workbook: TableauWorkbook): string {
     ">
       <span style="font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#b45309;">Quick Filter</span>
       ${filterLabel.map(f => `<span style="font-size:11px;font-weight:500;color:#78350f;text-align:center;line-height:1.3;">${escHtml(f)}</span>`).join('')}
-      <span style="font-size:9px;color:#92400e;background:#fef3c7;padding:1px 6px;border-radius:4px;">type: ${filterType}</span>
     </div>`;
     }
 
@@ -339,93 +314,13 @@ ${zoneBlocks}
 </html>`;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Local helpers ────────────────────────────────────────────────────────────
 
-type LeafKind = 'worksheet' | 'paramctrl' | 'text';
-interface LeafZone {
-  worksheet: string;
-  kind: LeafKind;
-  displayLabel?: string;
-  controlMode?: string;
-  paramRef?: string;
-  showTitle?: boolean;
-  x: number; y: number; w: number; h: number;
-}
-
-function collectLeafZones(zones: Zone[]): LeafZone[] {
-  const leaves: LeafZone[] = [];
-  function walk(z: Zone) {
-    if (z.children.length === 0) {
-      if (z.worksheet) {
-        leaves.push({
-          worksheet: z.worksheet, kind: 'worksheet',
-          displayLabel: z.displayLabel, showTitle: z.showTitle,
-          x: z.x, y: z.y, w: z.w, h: z.h,
-        });
-      } else if (z.type === 'paramctrl') {
-        leaves.push({
-          worksheet: z.name ?? '',  kind: 'paramctrl',
-          displayLabel: z.displayLabel,
-          controlMode: z.controlMode,
-          paramRef: z.paramRef,
-          x: z.x, y: z.y, w: z.w, h: z.h,
-        });
-      } else if (z.type === 'text') {
-        leaves.push({
-          worksheet: z.name ?? 'Title', kind: 'text',
-          displayLabel: z.displayLabel,
-          x: z.x, y: z.y, w: z.w, h: z.h,
-        });
-      }
-      return;
-    }
-    for (const c of z.children) walk(c);
-  }
-  for (const z of zones) walk(z);
-  return leaves;
-}
-
-function zoneStyle(mark: MarkType): { bg: string; border: string; badge: string; badgeBg: string } {
-  switch (mark) {
-    case 'automatic':
-    case 'text':
-      return { bg: '#dbeafe', border: '#3b82f6', badge: '#1d4ed8', badgeBg: '#eff6ff' };
-    case 'map':
-      return { bg: '#f1f5f9', border: '#94a3b8', badge: '#475569', badgeBg: '#e2e8f0' };
-    case 'bar':
-    case 'line':
-    case 'area':
-    case 'pie':
-      return { bg: '#dcfce7', border: '#22c55e', badge: '#15803d', badgeBg: '#f0fdf4' };
-    default:
-      return { bg: '#f8fafc', border: '#cbd5e1', badge: '#64748b', badgeBg: '#f1f5f9' };
-  }
-}
-
-function markTypeLabel(mark: MarkType): string {
-  const labels: Partial<Record<MarkType, string>> = {
-    automatic: 'Text Table',
-    text: 'Text Table',
-    bar: 'Bar Chart',
-    line: 'Line Chart',
-    area: 'Area Chart',
-    pie: 'Pie Chart',
-    map: 'Map',
-    heatmap: 'Heat Map',
-    circle: 'Scatter',
-    unsupported: 'Unsupported',
-  };
-  return labels[mark] ?? mark;
-}
-
-function cleanRef(field: string): string {
-  const parts = field.split(':');
-  const mid = parts.length >= 3 ? parts.slice(1, -1).join(':') : field;
-  return mid.replace(/^\[|\]$/g, '').replace(/^_+\s*/, '').replace(/^\./, '');
-}
-
-function pct(n: number): string {
-  return `${Math.round(n * 10000) / 100}%`;
+// Alias for layout-html: zone-helpers exports the canonical versions.
+// zoneStyle wraps zoneColors for HTML (uses 'badge' key name).
+function zoneStyle(mark: MarkType) {
+  const c = zoneColors(mark);
+  return { bg: c.bg, border: c.border, badge: c.badgeColor, badgeBg: c.badgeBg };
 }
 
 function escHtml(s: string): string {
