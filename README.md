@@ -16,7 +16,7 @@
 ---
 
 <p align="center">
-  Migrate Tableau reports to modern ReactJS dashboards — fast.
+  The bridge from BI to AI — turn Tableau workbooks into structured, AI-ready knowledge.
 </p>
 
 <p align="center">
@@ -36,176 +36,195 @@
 
 ---
 
-**drexo** is an open-source Node.js CLI that turns Tableau workbooks (`.twb` / `.twbx`) into clean, AI-readable metadata files today — and runnable React dashboard apps in v0.2.
+Tableau stores your business logic — field definitions, calculations, dashboard layouts, filter wiring — in formats that no AI system can read. **drexo** changes that.
 
-Stop paying per-user Tableau licenses for internal dashboards. Own your code, own your metadata.
-
-> **v0.1 (current):** `drexo analyze` produces a canonical metadata file (markdown + YAML) describing the workbook. Human-readable, agent-readable, paste-into-ChatGPT-able.
-> **v0.2 (next):** `drexo migrate` reads that metadata and emits a Vite + React app, deployable anywhere.
+Point `drexo analyze` at any `.twbx` file and get back two structured markdown files: a complete metadata model and a visual blueprint with SQL query specifications. Pass them to any LLM, feed them into a code generator, or use them to scaffold a React frontend backed by a real API.
 
 ---
 
 ## How It Works
 
 ```
-Tableau Workbook (.twb / .twbx)
+Tableau Workbook (.twbx)
         │
         ▼
-   drexo analyze
+   drexo analyze [--enrich]
         │
-        ▼
-  .model.md  (metadata — markdown + YAML)
+        ├──▶  .model.md    — metadata: fields, calculations, data sources,
+        │                    worksheets, dashboards, filters (markdown + YAML)
         │
-        ▼
-   drexo migrate  [v0.2]
-        │
-        ▼
-   React App (Vite)
-        │
-        ▼
-  Deploy anywhere
+        └──▶  .visual.md   — visual blueprint: dashboard layout, per-worksheet
+                             SQL query specs, interactive filter wiring,
+                             field dictionary, calculated field translations
 ```
 
----
-
-## ✨ Features
-
-- **Deep Tableau Analysis** — Understand worksheets, dashboards, data sources, fields, and calculations
-- **AI-Ready Metadata** — `.model.md` output is human-readable, LLM-friendly, and paste-into-ChatGPT-able
-- **High-Fidelity Migration** — Map common mark types (bar, line, pie, scatter, tables, etc.) to beautiful React components
-- **Smart Layouts** — Convert Tableau dashboard zones into responsive React grids
-- **Multiple Targets** — Generate Vite + React apps or embeddable components for Next.js
-- **Flexible Data** — Static JSON, API adapters, or live connections
-- **Great Developer Experience** — TypeScript, modern tooling, easy to customize generated code
-
-> **Current status**: v0.1 metadata pipeline ships. `drexo analyze` runs end-to-end on real workbooks. React generation lands in v0.2. Contributions welcome!
+With `--enrich`, both files pass through Claude for a second pass: AI-generated executive summary, worksheet descriptions, plain-English formula translations, and cleaned field names with business context added to every SQL block.
 
 ---
 
-## 🚀 Quick Start
+## What's in the Output
 
-### Prerequisites
+### `.model.md` — Structural Metadata
 
-- Node.js 20+
-- A Tableau workbook (`.twb` or `.twbx`)
+Everything drexo extracts from the Tableau XML:
 
-### Installation
+- **Workbook metadata** — name, Tableau version, export timestamp
+- **Data sources** — connection type, all fields with types and roles
+- **Semantic layer** — every field: raw name, display caption, data type, role
+- **Calculated fields** — Tableau formulas captured verbatim, with AI-simplified versions when `--enrich` is used
+- **Worksheets** — mark types, AI-generated descriptions
+- **Visual encodings** — rows shelf, columns shelf, color, size, filters per worksheet
+- **Dashboard layout** — full zone tree with coordinates preserved for grid reconstruction
+- **Filters & actions** — all cross-sheet action filter wiring
+- **Executive summary** — AI-generated when `--enrich` is used
+
+### `.visual.md` — Visual Blueprint
+
+Designed for developers and AI agents building the frontend and backend:
+
+- **Dashboard layout** — proportional ASCII layout + table (61%/39% column splits, etc.)
+- **Per-worksheet query specs** — SQL equivalent of what Tableau executes, with filter parameters
+- **Interactive wiring** — which fields connect which worksheets as action filters, and the URL param name for each
+- **Calculated field translations** — Tableau `IF/THEN/ELSE` → SQL `CASE WHEN`
+- **Field dictionary** — internal Tableau names → clean display names
+- **Data source summary** — base columns with types and roles
+
+---
+
+## Quick Start
 
 ```bash
-# Run instantly with npx (recommended while in development)
-npx drexo@latest --help
-
-# Or install globally
 npm install -g drexo
 ```
 
-### Basic Usage
+### Analyze a single workbook
 
 ```bash
-# Generate the metadata file for a workbook
-drexo analyze ./examples/giving-renewal-summary.twbx
-
-# Output lands next to the input as <name>.model.md
-cat ./examples/giving-renewal-summary.model.md
+drexo analyze ./my-report.twbx
+# Writes: my-report.model.md + my-report.visual.md
 ```
 
-The generated `.model.md` is a single self-contained file: markdown narrative + fenced YAML blocks. Paste it into any LLM and ask questions about your dashboard, or feed it into `drexo migrate` (v0.2) to generate a React app.
+### AI-enriched output
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+drexo analyze ./my-report.twbx --enrich
+# Claude enriches both files: summaries, descriptions, cleaned SQL
+# Results are cached — repeat runs are free
+```
+
+### Analyze an entire folder
+
+```bash
+drexo analyze ./workbooks/ --output-dir ./reports
+# Finds all .twbx files, runs 3 in parallel
+# Writes organized subdirectories + index.md catalog
+```
+
+### Explicit batch
+
+```bash
+drexo analyze report-a.twbx report-b.twbx --output-dir ./reports --enrich
+```
 
 ---
 
-## 📋 Commands
+## Commands
 
 | Command | Description |
 |---|---|
-| `drexo analyze <file>` | Parse a Tableau workbook and write a canonical metadata file (`<name>.model.md`) |
-| `drexo analyze <file> -o <path>` | Custom output path |
-| `drexo migrate <file>` | **[v0.2]** Read the metadata file and generate a Vite + React app. Stub for now — prints a friendly redirect to `analyze`. |
+| `drexo analyze <files...>` | Analyze one or more workbooks. Accepts files, a directory, or a mix. |
+| `--output-dir <path>` | Write outputs into organized subdirectories. Generates an `index.md` catalog when multiple workbooks are processed. |
+| `--enrich` | Enrich output with AI-generated summaries, descriptions, and cleaned SQL (requires `ANTHROPIC_API_KEY`). Results cached by content hash. |
+| `--enrich-model <model>` | Claude model to use (default: `claude-haiku-4-5-20251001`) |
 | `drexo --debug` | Enable debug logging (stack traces on errors) |
 | `drexo --help` | Show all options and examples |
 | `drexo --version` | Print the drexo version |
 
----
+### Output structure with `--output-dir`
 
-## 🗺️ Roadmap
-
-drexo is a **generic** Tableau-to-React migrator. We get there by shipping working specific cases first and letting real workbooks shape the architecture — not by designing for everything on day one.
-
-| Phase | Goal |
-|-------|------|
-| ✅ **v0.1 — The Metadata Wedge** *(shipped)* | `drexo analyze` → a complete, human+agent-readable metadata file (markdown + YAML) describing the workbook. No React yet. |
-| **v0.2 — React Generator + First Real Users** *(next)* | `drexo migrate` reads the metadata file → Vite + React app. 3 outside users surface real-world schema gaps. |
-| **v0.3 — Multi-Sheet & Layout** | Whole dashboard, not one sheet. Layout zones → responsive React grid. Read-only parameter display. |
-| **v1.0 — Production-Ready Generic** | Confident defaults across the long tail. Calculated fields, live parameters, filters, action links. Stable CLI surface. |
-| **post-v1 — Data Agents & Commercial Layer** *(conditional)* | Data-agent CLI (e.g. `drexo query`) using the metadata layer for conversational Q&A. Plus possible hosted runs / cloud deploy. CLI stays free forever. |
-
-**Anti-roadmap (explicit no):** Tableau parity, two-way sync, visual editor, multi-chart-library support before v1.0, SaaS before users.
+```
+reports/
+  index.md                              ← catalog: all workbooks, worksheet counts, summaries
+  accounts-receivable-analysis/
+    model.md
+    visual.md
+  superstore-analysis/
+    model.md
+    visual.md
+```
 
 ---
 
-## 🛠️ Development
+## Why Two Files?
+
+`.model.md` answers: *"what is in this workbook?"*
+`.visual.md` answers: *"how do I rebuild it?"*
+
+The visual blueprint is the document a developer or AI agent needs to generate both the React frontend components and the backend API routes. It maps directly to code:
+
+- Dashboard layout → CSS grid percentages
+- Query spec → API endpoint + SQL
+- Filter wiring → shared URL query params or React context
+- Field dictionary → TypeScript interface names
+
+---
+
+## Roadmap
+
+| Phase | Status | Goal |
+|-------|--------|------|
+| **v0.1 — Metadata Wedge** | ✅ Shipped | `drexo analyze` → `.model.md` |
+| **v0.2 — Visual Blueprint + AI Enrichment** | ✅ Shipped | `--enrich`, `.visual.md` with SQL specs, batch processing, organized output |
+| **v0.3 — React Generator** | Next | `drexo migrate` → Vite + React app wired to real API endpoints |
+| **v1.0 — Production-Ready** | Planned | Live data, interactive filters, calculated fields in generated code |
+| **post-v1 — Data Agents** | Conditional | `drexo query` — conversational Q&A over your BI catalog |
+
+Full roadmap: [`docs/ROADMAP.md`](./docs/ROADMAP.md)
+
+---
+
+## Development
 
 ```bash
 git clone https://github.com/raguvindtharanitharan/drexo.git
 cd drexo
 npm install
 
-# Run the CLI in dev mode (TypeScript, no build step)
-npm run dev -- analyze ./examples/giving-renewal-summary.twbx
+# Run the CLI without a build step
+npm run dev -- analyze ./examples/Accounts\ Receivable\ Analysis.twbx
 
 # Build
 npm run build
 
-# Run the test suite
+# Run tests
 npm test
-
-# Link for local global testing
-npm run link
-drexo --version
 ```
 
-**Tech decisions we made early**:
-- ESM-only TypeScript (no CJS shims, no `__dirname` hacks)
+**Tech stack:**
+- ESM-only TypeScript — no CJS shims, no `__dirname` hacks
 - `commander` for the CLI surface
 - `fast-xml-parser` for `.twb` parsing; `adm-zip` for `.twbx` unzip
-- `yaml` (Eemeli Aro) for canonical YAML emission
-- Vitest + real-fixture integration tests (no mocked `.twb` XML)
-- Markdown + YAML as the v0.1 output format — friendly to humans, LLMs, and downstream tooling. Same shape as dbt's docs.
+- `@anthropic-ai/sdk` for the enrichment layer
+- Vitest + real-fixture integration tests (no mocked XML)
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-We're just getting started — this is a fantastic time to shape the project!
+The parser and visual blueprint generator are the highest-leverage areas right now. Every new workbook surfaces edge cases that make drexo more generic.
 
 - Read [CONTRIBUTING.md](./CONTRIBUTING.md)
-- Look for issues labeled `good first issue` or `parser`
-- The hardest (and most valuable) work is in the Tableau XML parser
-
-Before submitting a pull request, open an issue so we can discuss the approach:
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes
-4. Open a pull request
-
-All contributions are welcome: code, docs, example workbooks, design feedback, or real-world migration stories.
+- Issues labeled `good first issue` and `parser` are great starting points
+- Real workbooks (even anonymized) are the most valuable contribution
 
 ---
 
-## 📄 License
+## License
 
 MIT © [Raguvind Tharanitharan](https://github.com/raguvindtharanitharan)
 
 ---
 
-## 🙏 Acknowledgements
-
-- Inspired by the pain of expensive BI tools and the joy of building in React
-- Tableau's public workbooks and documentation (reverse-engineered with respect)
-- The amazing open-source React visualization community (Recharts, ECharts, Nivo, etc.)
-
----
-
-**Made with ❤️ for teams tired of vendor lock-in.**
-
-If drexo saves your company money or helps you ship faster, star the repo and tell your friends!
+**Made for teams tired of vendor lock-in.**
+If drexo saves your company money, star the repo and tell your friends.

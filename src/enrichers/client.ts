@@ -13,6 +13,35 @@ export interface ClaudeResult {
   outputTokens: number;
 }
 
+export interface ClaudeRawResult {
+  text: string | null;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export async function callClaudeRaw(
+  client: AnthropicClient,
+  model: string,
+  prompt: string,
+  maxTokens = 4096,
+): Promise<ClaudeRawResult> {
+  try {
+    const response = await client.messages.create({
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const block = response.content.find((b) => b.type === 'text');
+    return {
+      text: block?.type === 'text' ? block.text.trim() : null,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+  } catch {
+    return { text: null, inputTokens: 0, outputTokens: 0 };
+  }
+}
+
 export async function callClaude(
   client: AnthropicClient,
   model: string,

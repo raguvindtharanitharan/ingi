@@ -3,6 +3,7 @@ import { createAnthropicClient } from './client.js';
 import { enrichExecutiveSummary } from './executive-summary.js';
 import { enrichWorksheetDescriptions } from './worksheet-descriptions.js';
 import { enrichCalcSimplifications } from './calc-captions.js';
+import { enrichVisualBlueprint } from './visual-blueprint.js';
 
 export interface EnrichOptions {
   apiKey: string;
@@ -12,7 +13,7 @@ export interface EnrichOptions {
 }
 
 export interface EnrichStep {
-  phase: 'executive_summary' | 'worksheet_descriptions' | 'calc_simplifications';
+  phase: 'executive_summary' | 'worksheet_descriptions' | 'calc_simplifications' | 'visual_blueprint';
   done: number;
   total: number;
   fromCache: number;
@@ -33,12 +34,13 @@ const PRICE_PER_M_OUTPUT = 4.00;
 
 export interface EnrichWorkbookResult {
   workbook: TableauWorkbook;
+  enrichedVisualBlueprint: string | null;
   usage: EnrichUsage;
 }
 
 export async function enrichWorkbook(
   workbook: TableauWorkbook,
-  opts: EnrichOptions
+  opts: EnrichOptions & { visualBlueprint?: string },
 ): Promise<EnrichWorkbookResult> {
   const model = opts.model ?? DEFAULT_MODEL;
   const cacheDir = opts.cacheDir ?? DEFAULT_CACHE_DIR;
@@ -80,6 +82,17 @@ export async function enrichWorkbook(
   totalInput += calcResult.inputTokens;
   totalOutput += calcResult.outputTokens;
 
+  // 4 — Visual blueprint enrichment (if blueprint was provided)
+  let enrichedVisualBlueprint: string | null = null;
+  if (opts.visualBlueprint) {
+    opts.onProgress?.({ phase: 'visual_blueprint', done: 0, total: 1, fromCache: 0 });
+    const vbResult = await enrichVisualBlueprint(opts.visualBlueprint, workbook, client, model, cacheDir);
+    totalInput += vbResult.inputTokens;
+    totalOutput += vbResult.outputTokens;
+    enrichedVisualBlueprint = vbResult.value;
+    opts.onProgress?.({ phase: 'visual_blueprint', done: 1, total: 1, fromCache: 0 });
+  }
+
   const estimatedCostUsd =
     (totalInput / 1_000_000) * PRICE_PER_M_INPUT +
     (totalOutput / 1_000_000) * PRICE_PER_M_OUTPUT;
@@ -91,6 +104,7 @@ export async function enrichWorkbook(
       worksheets: wsResult.value,
       calculations: calcResult.value,
     },
+    enrichedVisualBlueprint,
     usage: { inputTokens: totalInput, outputTokens: totalOutput, estimatedCostUsd },
   };
 }
