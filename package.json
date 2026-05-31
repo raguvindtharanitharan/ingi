@@ -1,7 +1,7 @@
 {
   "name": "drexo",
-  "version": "0.1.0",
-  "description": "CLI tool to migrate Tableau reports into modern ReactJS dashboards",
+  "version": "0.2.0",
+  "description": "The bridge from BI to AI — turn Tableau workbooks into structured, AI-ready metadata",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
@@ -30,12 +30,15 @@
   },
   "keywords": [
     "tableau",
-    "react",
+    "bi",
+    "ai",
+    "metadata",
     "migration",
     "dashboard",
     "cli",
-    "opensource",
-    "data-visualization"
+    "react",
+    "data-visualization",
+    "analytics-engineering"
   ],
   "author": "Raguvind Tharanitharan",
   "license": "MIT",
